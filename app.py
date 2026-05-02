@@ -1900,6 +1900,30 @@ def _safe_rewind_files(file_list):
                 pass
 
 
+def _release_uploaded_files(file_list, clear_widget_keys=False):
+    """Libera referencias de archivos subidos para reducir uso de memoria.
+
+    - Cierra objetos archivo si exponen `.close()`.
+    - Elimina claves de widgets uploader en session_state si se solicita.
+    - Fuerza `gc.collect()` al final.
+    """
+    for fo in file_list or []:
+        if fo is None:
+            continue
+        try:
+            if hasattr(fo, 'close'):
+                fo.close()
+        except Exception:
+            pass
+
+    if clear_widget_keys:
+        for key in ('ini_a', 'ini_b', 'fin_a', 'fin_b', 'inicial_pdf', 'final_pdf'):
+            if key in st.session_state:
+                del st.session_state[key]
+
+    gc.collect()
+
+
 # --- Regex precompiladas globales para reducir coste por llamada ---
 REGEX_BASE_LINE = re.compile(r'^\s*([A-Z]{3})\s+(\S+)\s+(JC|TC)\s+(.*)')
 REGEX_TIME_POS = re.compile(r'(\d{1,2}):(\d{2})')
@@ -2898,7 +2922,14 @@ def _extract_daily_duty_data_impl(file_list, progress_callback=None):
                     for ld in long_duty_days:
                         if ld[0] not in existing_ld_days:
                             existing['long_duty_days'].append(ld)
-    
+
+        # Liberación de memoria por PDF procesado
+        try:
+            del reader
+        except Exception:
+            pass
+        gc.collect()
+
     return all_crew_data
 
 @st.cache_data(show_spinner=False, max_entries=8)
@@ -3350,6 +3381,7 @@ def _extract_sectors_by_day_pdfplumber_impl(file_list, progress_callback=None):
         finally:
             pdf.close()
             del pdf
+            gc.collect()
     
     return all_sectors
 
@@ -3724,6 +3756,13 @@ def _extract_roster_stream_impl(file_list, base_seleccionada, progress_callback=
                     )
             
             carry_over_lines = page_lines[-12:] if len(page_lines) >= 12 else page_lines[:]
+
+        # Liberación de memoria por PDF procesado
+        try:
+            del reader
+        except Exception:
+            pass
+        gc.collect()
     
     # === METADATOS Y VALIDACIÓN ===
     validation['unique_ids_final'] = len([k for k in rosters if k != '__meta__'])
@@ -5957,6 +5996,7 @@ if ready:
                 progress_bar.empty()
                 status_text.empty()
                 pct_text.empty()
+                _release_uploaded_files(f_init + f_final, clear_widget_keys=False)
                 st.error("❌ Error durante el procesamiento. La sesión se mantiene activa para reintentar.")
                 with st.expander("Detalle técnico del error", expanded=False):
                     st.code(traceback.format_exc())
@@ -5966,6 +6006,7 @@ if ready:
                 progress_bar.empty()
                 status_text.empty()
                 pct_text.empty()
+                _release_uploaded_files(f_init + f_final, clear_widget_keys=False)
                 st.error(f"⚠️ **No se encontraron tripulantes** en la programación final.")
                 st.warning(f"Verifica que los archivos PDF contienen programaciones válidas.")
                 st.stop()
@@ -6277,9 +6318,10 @@ if ready:
 
                 # Liberación explícita de memoria para bases grandes (BCN)
                 try:
-                    del comp_data, resumen_codigos, sectors_ini, sectors_fin
+                    del comp_data, resumen_codigos, sectors_ini, sectors_fin, r_i, r_f
                 except Exception:
                     pass
+                _release_uploaded_files(f_init + f_final, clear_widget_keys=True)
                 gc.collect()
 
                 st.rerun()
