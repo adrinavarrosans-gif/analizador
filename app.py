@@ -1,11 +1,4 @@
 import streamlit as st
-# === CONFIGURACIÓN DE LÍMITES DE SUBIDA ===
-# Esto debe ir ANTES de cualquier otro comando de streamlit
-if 'config_set' not in st.session_state:
-    st.set_page_config(page_title="Analizador de Programaciones", page_icon="✈️", layout="wide")
-    # Forzamos el límite de subida a 1GB (1024MB) programáticamente
-    st.markdown(f'<script>window.parent.postMessage({{"type": "streamlit:set_config", "config": {{"server.maxUploadSize": 1024}}}}, "*");</script>', unsafe_allow_html=True)
-    st.session_state['config_set'] = True
 import PyPDF2
 import pdfplumber
 import re
@@ -1918,6 +1911,41 @@ REGEX_ID_LINE = re.compile(r'^\s*(\d{2,6})\s')
 REGEX_SEPARATOR = re.compile(r'[_]{20,}')
 REGEX_TIME_ONLY = re.compile(r'^\d{1,2}:\d{2}$')
 
+# Umbral de cache para evitar duplicar en memoria PDFs muy grandes.
+CACHE_BYPASS_BYTES = int(os.getenv("CACHE_BYPASS_MB", "120")) * 1024 * 1024
+
+
+def _estimate_file_size(fo):
+    """Estimación robusta del tamaño del archivo sin cargarlo completo en RAM."""
+    if fo is None:
+        return 0
+
+    size_attr = getattr(fo, 'size', None)
+    if isinstance(size_attr, int) and size_attr >= 0:
+        return size_attr
+
+    if hasattr(fo, 'getbuffer'):
+        try:
+            return len(fo.getbuffer())
+        except Exception:
+            pass
+
+    if hasattr(fo, 'seek') and hasattr(fo, 'tell'):
+        try:
+            current = fo.tell()
+            fo.seek(0, os.SEEK_END)
+            size = fo.tell()
+            fo.seek(current)
+            return max(size, 0)
+        except Exception:
+            return 0
+
+    return 0
+
+
+def _estimate_total_size(file_list):
+    return sum(_estimate_file_size(fo) for fo in (file_list or []) if fo is not None)
+
 
 def _files_to_cache_payload(file_list):
     """Convierte UploadedFile/BytesIO a payload hashable para cache de Streamlit."""
@@ -2881,14 +2909,19 @@ def _extract_daily_duty_data_cached(payload):
 
 def extract_daily_duty_data(file_list, progress_callback=None):
     """Wrapper cacheado; mantiene compatibilidad de firma original."""
+    total_bytes = _estimate_total_size(file_list)
+    if total_bytes <= 0:
+        return {}
+
+    # Evitar cachear PDFs masivos para no duplicar bytes en RAM.
+    if total_bytes > CACHE_BYPASS_BYTES:
+        _safe_rewind_files(file_list)
+        return _extract_daily_duty_data_impl(file_list, progress_callback=progress_callback)
+
     payload = _files_to_cache_payload(file_list)
     if not payload:
         return {}
-    total_bytes = sum(len(b) for _, b in payload)
-    # Evitar cachear PDFs masivos (BCN) para no saturar memoria en cpu-basic.
-    if total_bytes > 120 * 1024 * 1024:
-        files = _payload_to_fileobjs(payload)
-        return _extract_daily_duty_data_impl(files, progress_callback=progress_callback)
+
     # En modo cacheado no se usa progreso página a página para evitar romper hash de cache.
     if progress_callback:
         progress_callback(1, 1, "Long duties")
@@ -3327,13 +3360,17 @@ def _extract_sectors_by_day_cached(payload):
 
 
 def extract_sectors_by_day_pdfplumber(file_list, progress_callback=None):
+    total_bytes = _estimate_total_size(file_list)
+    if total_bytes <= 0:
+        return {}
+
+    if total_bytes > CACHE_BYPASS_BYTES:
+        _safe_rewind_files(file_list)
+        return _extract_sectors_by_day_pdfplumber_impl(file_list, progress_callback=progress_callback)
+
     payload = _files_to_cache_payload(file_list)
     if not payload:
         return {}
-    total_bytes = sum(len(b) for _, b in payload)
-    if total_bytes > 120 * 1024 * 1024:
-        files = _payload_to_fileobjs(payload)
-        return _extract_sectors_by_day_pdfplumber_impl(files, progress_callback=progress_callback)
     if progress_callback:
         progress_callback(1, 1, "Sectores")
     return _extract_sectors_by_day_cached(payload)
@@ -3711,13 +3748,17 @@ def _extract_roster_stream_cached(payload, base_seleccionada):
 
 
 def extract_roster_stream(file_list, base_seleccionada, progress_callback=None, progress_label="Extrayendo roster"):
+    total_bytes = _estimate_total_size(file_list)
+    if total_bytes <= 0:
+        return {}
+
+    if total_bytes > CACHE_BYPASS_BYTES:
+        _safe_rewind_files(file_list)
+        return _extract_roster_stream_impl(file_list, base_seleccionada, progress_callback=progress_callback, progress_label=progress_label)
+
     payload = _files_to_cache_payload(file_list)
     if not payload:
         return {}
-    total_bytes = sum(len(b) for _, b in payload)
-    if total_bytes > 120 * 1024 * 1024:
-        files = _payload_to_fileobjs(payload)
-        return _extract_roster_stream_impl(files, base_seleccionada, progress_callback=progress_callback, progress_label=progress_label)
     if progress_callback:
         progress_callback(1, 1, progress_label)
     return _extract_roster_stream_cached(payload, base_seleccionada)
