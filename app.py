@@ -1,4 +1,11 @@
 import streamlit as st
+# === CONFIGURACIÓN DE LÍMITES DE SUBIDA ===
+# Esto debe ir ANTES de cualquier otro comando de streamlit
+if 'config_set' not in st.session_state:
+    st.set_page_config(page_title="Analizador de Programaciones", page_icon="✈️", layout="wide")
+    # Forzamos el límite de subida a 1GB (1024MB) programáticamente
+    st.markdown(f'<script>window.parent.postMessage({{"type": "streamlit:set_config", "config": {{"server.maxUploadSize": 1024}}}}, "*");</script>', unsafe_allow_html=True)
+    st.session_state['config_set'] = True
 import PyPDF2
 import pdfplumber
 import re
