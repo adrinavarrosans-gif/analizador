@@ -1,7 +1,9 @@
 streamlit
 pandas
-pymupdf
 plotly
 reportlab
 openpyxl
 Pillow
+pdfplumber
+PyPDF2
+pymupdf
