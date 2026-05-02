@@ -1,0 +1,26 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/analizador', '.']
+    timeout: '1200s'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/analizador']
+    timeout: '1200s'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'analizador'
+      - '--image=gcr.io/$PROJECT_ID/analizador'
+      - '--region=europe-southwest1'
+      - '--platform=managed'
+      - '--memory=4Gi'
+      - '--cpu=4'
+      - '--timeout=1500s'
+      - '--max-instances=2'
+      - '--allow-unauthenticated'
+      - '--port=8080'
+
+timeout: '2400s'
